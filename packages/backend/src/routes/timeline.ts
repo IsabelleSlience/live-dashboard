@@ -46,6 +46,11 @@ export function handleTimeline(url: URL): Response {
   }
 
   // Build timeline segments with duration
+  // Gap threshold: if time between two consecutive activities exceeds this,
+  // the device was likely offline (sleep/shutdown). Agent heartbeats every 60s,
+  // so a 2-minute gap means the device went away.
+  const GAP_THRESHOLD_MS = 2 * 60 * 1000;
+
   const segments: TimelineSegment[] = [];
   for (let i = 0; i < activities.length; i++) {
     const a = activities[i];
@@ -59,8 +64,20 @@ export function handleTimeline(url: URL): Response {
     }
 
     const startMs = new Date(a.started_at).getTime();
-    const endMs = endedAt ? new Date(endedAt).getTime() : startMs;
-    const durationMinutes = Math.round((endMs - startMs) / 60000);
+    if (isNaN(startMs)) continue; // skip malformed timestamps
+
+    let endMs = endedAt ? new Date(endedAt).getTime() : startMs;
+    if (isNaN(endMs)) endMs = startMs;
+
+    // If the gap to the next activity exceeds the threshold, the device was
+    // offline in between. Cap this segment's end to 1 minute after its start
+    // (approximate last heartbeat window) instead of spanning the full gap.
+    if (endedAt && endMs - startMs > GAP_THRESHOLD_MS) {
+      endMs = startMs + 60_000;
+      endedAt = new Date(endMs).toISOString();
+    }
+
+    const durationMinutes = Math.max(0, Math.round((endMs - startMs) / 60000));
 
     segments.push({
       app_name: a.app_name,
