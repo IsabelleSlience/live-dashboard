@@ -38,7 +38,6 @@ export async function handleReport(req: Request): Promise<Response> {
   if (typeof body.timestamp === "string" && body.timestamp) {
     const ts = new Date(body.timestamp);
     const now = Date.now();
-    // Accept if within ±5 minutes, otherwise use server time
     if (!isNaN(ts.getTime()) && Math.abs(ts.getTime() - now) < 5 * 60 * 1000) {
       startedAt = ts.toISOString();
     } else {
@@ -64,29 +63,32 @@ export async function handleReport(req: Request): Promise<Response> {
   const titleHash = hmacTitle(windowTitle.toLowerCase().trim());
 
   // Parse extra (battery, music, etc.) — whitelist fields first, then serialize
-  let extraJson = "{}";
+  const extra: Record<string, unknown> = {};
+  
+  // Battery from body.extra
   if (body.extra && typeof body.extra === "object" && !Array.isArray(body.extra)) {
-    const extra: Record<string, unknown> = {};
     if (typeof body.extra.battery_percent === "number" && Number.isFinite(body.extra.battery_percent)) {
       extra.battery_percent = Math.max(0, Math.min(100, Math.round(body.extra.battery_percent)));
     }
     if (typeof body.extra.battery_charging === "boolean") {
       extra.battery_charging = body.extra.battery_charging;
     }
-    // Store music data if present
-    if (body.music && typeof body.music === "object" && !Array.isArray(body.music)) {
-      const music: Record<string, unknown> = {};
-      if (typeof body.music.title === "string") music.title = body.music.title;
-      if (typeof body.music.artist === "string") music.artist = body.music.artist;
-      if (typeof body.music.album === "string") music.album = body.music.album;
-      if (typeof body.music.playing === "boolean") music.playing = body.music.playing;
-      if (typeof body.music.duration === "number") music.duration = body.music.duration;
-      if (typeof body.music.elapsedTime === "number") music.elapsedTime = body.music.elapsedTime;
-      if (typeof body.music.bundleIdentifier === "string") music.bundleIdentifier = body.music.bundleIdentifier;
-      extra.music = music;
-    }
-    extraJson = JSON.stringify(extra);
   }
+  
+  // Music from body.music (top level)
+  if (body.music && typeof body.music === "object" && !Array.isArray(body.music)) {
+    const music: Record<string, unknown> = {};
+    if (typeof body.music.title === "string") music.title = body.music.title;
+    if (typeof body.music.artist === "string") music.artist = body.music.artist;
+    if (typeof body.music.album === "string") music.album = body.music.album;
+    if (typeof body.music.playing === "boolean") music.playing = body.music.playing;
+    if (typeof body.music.duration === "number") music.duration = body.music.duration;
+    if (typeof body.music.elapsedTime === "number") music.elapsedTime = body.music.elapsedTime;
+    if (typeof body.music.bundleIdentifier === "string") music.bundleIdentifier = body.music.bundleIdentifier;
+    extra.music = music;
+  }
+  
+  const extraJson = JSON.stringify(extra);
 
   // Insert activity — window_title is NEVER stored (privacy: empty string)
   try {
@@ -96,20 +98,19 @@ export async function handleReport(req: Request): Promise<Response> {
       device.platform,
       appId,
       appName,
-      "",           // window_title: always empty for privacy
+      "",
       displayTitle,
       titleHash,
       timeBucket,
       startedAt
     );
   } catch (e: any) {
-    // Log but don't expose internals
     if (!e.message?.includes("UNIQUE constraint")) {
       console.error("[report] DB insert error:", e.message);
     }
   }
 
-  // Always update device state (even if activity was deduped)
+  // Always update device state
   try {
     upsertDeviceState.run(
       device.device_id,
@@ -117,7 +118,7 @@ export async function handleReport(req: Request): Promise<Response> {
       device.platform,
       appId,
       appName,
-      "",           // window_title: always empty for privacy
+      "",
       displayTitle,
       new Date().toISOString(),
       extraJson
