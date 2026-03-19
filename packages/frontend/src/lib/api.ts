@@ -20,7 +20,7 @@ export interface DeviceState {
       duration?: number;
       elapsedTime?: number;
   };
-}
+};
 
 export interface ActivityRecord {
   id: number;
