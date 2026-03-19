@@ -10,6 +10,8 @@ services:
       - DEVICE_TOKEN_1=${DEVICE_TOKEN_1}
       - DEVICE_TOKEN_2=${DEVICE_TOKEN_2}
       - HASH_SECRET=${HASH_SECRET}
+    ports:
+      - "3000:3000"
     volumes:
       - dashboard_data:/data
     networks:

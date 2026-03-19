@@ -1,0 +1,25 @@
+import subprocess
+
+def run(script: str):
+    result = subprocess.run(
+        ["osascript", "-e", script],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        print("ERR:", result.stderr.strip())
+        return None
+    return result.stdout.strip()
+
+script = '''
+tell application "System Events"
+    tell process "QQMusic"
+        try
+            return name of front window
+        on error
+            return "NO_WINDOW_TITLE"
+        end try
+    end tell
+end tell
+'''
+
