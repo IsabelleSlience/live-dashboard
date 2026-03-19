@@ -19,8 +19,9 @@ export interface DeviceState {
       playing?: boolean;
       duration?: number;
       elapsedTime?: number;
+    };
   };
-};
+}
 
 export interface ActivityRecord {
   id: number;
@@ -64,7 +65,7 @@ export async function fetchCurrent(signal?: AbortSignal): Promise<CurrentRespons
 }
 
 export async function fetchTimeline(date: string, signal?: AbortSignal): Promise<TimelineResponse> {
-  const tz = new Date().getTimezoneOffset(); // e.g. -480 for UTC+8
+  const tz = new Date().getTimezoneOffset();
   const url = `${API_BASE}/api/timeline?date=${encodeURIComponent(date)}&tz=${tz}`;
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
