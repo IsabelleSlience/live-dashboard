@@ -63,7 +63,7 @@ export async function handleReport(req: Request): Promise<Response> {
   const timeBucket = Math.floor(Date.now() / 10000);
   const titleHash = hmacTitle(windowTitle.toLowerCase().trim());
 
-  // Parse extra (battery, etc.) — whitelist fields first, then serialize
+  // Parse extra (battery, music, etc.) — whitelist fields first, then serialize
   let extraJson = "{}";
   if (body.extra && typeof body.extra === "object" && !Array.isArray(body.extra)) {
     const extra: Record<string, unknown> = {};
@@ -72,6 +72,18 @@ export async function handleReport(req: Request): Promise<Response> {
     }
     if (typeof body.extra.battery_charging === "boolean") {
       extra.battery_charging = body.extra.battery_charging;
+    }
+    // Store music data if present
+    if (body.music && typeof body.music === "object" && !Array.isArray(body.music)) {
+      const music: Record<string, unknown> = {};
+      if (typeof body.music.title === "string") music.title = body.music.title;
+      if (typeof body.music.artist === "string") music.artist = body.music.artist;
+      if (typeof body.music.album === "string") music.album = body.music.album;
+      if (typeof body.music.playing === "boolean") music.playing = body.music.playing;
+      if (typeof body.music.duration === "number") music.duration = body.music.duration;
+      if (typeof body.music.elapsedTime === "number") music.elapsedTime = body.music.elapsedTime;
+      if (typeof body.music.bundleIdentifier === "string") music.bundleIdentifier = body.music.bundleIdentifier;
+      extra.music = music;
     }
     extraJson = JSON.stringify(extra);
   }
