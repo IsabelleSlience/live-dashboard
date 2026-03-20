@@ -57,7 +57,7 @@ const server = Bun.serve({
           req.headers.get("cf-connecting-ip") ||
           server.requestIP(req)?.address ||
           "";
-        response = handleCurrent(clientIp);
+        response = handleCurrent(clientIp, req.headers.get("user-agent") || undefined);
       } else if (pathname === "/api/timeline" && req.method === "GET") {
         response = handleTimeline(url);
       } else if (pathname === "/api/health" && req.method === "GET") {

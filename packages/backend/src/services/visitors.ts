@@ -2,11 +2,30 @@
  * IP-based visitor counting service.
  * Each unique IP that polls /api/current counts as one viewer.
  * Stale entries are cleaned up every 30 seconds.
+ * Known bots/crawlers are excluded.
  */
 
 const TIMEOUT_MS = 30_000; // 30s — if no heartbeat, visitor is gone
 const MAX_ENTRIES = 10_000; // hard cap to prevent memory DoS
 const CLEANUP_INTERVAL_MS = 30_000;
+
+// Common bot User-Agent substrings (case-insensitive match)
+const BOT_PATTERNS = [
+  "bot", "crawl", "spider", "slurp", "mediapartners",
+  "facebookexternalhit", "linkedinbot", "twitterbot",
+  "whatsapp", "telegrambot", "discordbot", "bingpreview",
+  "yandex", "baidu", "sogou", "bytespider", "applebot",
+  "amazonbot", "gptbot", "claudebot", "anthropic",
+  "semrush", "ahref", "mj12bot", "dotbot", "petalbot",
+  "dataforseo", "headlesschrome", "phantomjs", "puppeteer",
+  "lighthouse", "pagespeed", "pingdom", "uptimerobot",
+];
+
+function isBot(ua: string): boolean {
+  if (!ua) return false;
+  const lower = ua.toLowerCase();
+  return BOT_PATTERNS.some((p) => lower.includes(p));
+}
 
 class VisitorTracker {
   private seen = new Map<string, number>(); // ip → last heartbeat timestamp
@@ -17,8 +36,9 @@ class VisitorTracker {
     timer.unref(); // don't block graceful shutdown
   }
 
-  heartbeat(ip: string): void {
+  heartbeat(ip: string, userAgent?: string): void {
     if (!ip) return;
+    if (userAgent && isBot(userAgent)) return;
     // If at capacity and this is a new IP, cleanup first to evict stale entries
     if (!this.seen.has(ip) && this.seen.size >= MAX_ENTRIES) {
       this.cleanup();

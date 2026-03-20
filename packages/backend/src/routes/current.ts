@@ -21,8 +21,8 @@ function stripWindowTitle<T extends { window_title?: string }>(
   return records.map(({ window_title, ...rest }) => rest);
 }
 
-export function handleCurrent(clientIp: string): Response {
-  visitors.heartbeat(clientIp);
+export function handleCurrent(clientIp: string, userAgent?: string): Response {
+  visitors.heartbeat(clientIp, userAgent);
 
   const devices = getAllDeviceStates.all() as DeviceState[];
   const recentActivities = getRecentActivities.all() as ActivityRecord[];
