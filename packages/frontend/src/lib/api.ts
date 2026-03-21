@@ -15,7 +15,11 @@ export interface DeviceState {
     music?: {
       title?: string;
       artist?: string;
+      album?: string;
       app?: string;
+      playing?: boolean;
+      duration?: number;
+      elapsedTime?: number;
     };
   };
 }

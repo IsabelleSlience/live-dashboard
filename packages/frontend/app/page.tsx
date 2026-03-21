@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 import { useDashboard } from "@/hooks/useDashboard";
 import Header from "@/components/Header";
 import CurrentStatus from "@/components/CurrentStatus";
+import MusicStatus from "@/components/MusicStatus";
 import DeviceCard from "@/components/DeviceCard";
 import DatePicker from "@/components/DatePicker";
 import Timeline from "@/components/Timeline";
@@ -68,6 +69,7 @@ export default function Home() {
         <>
           {/* Current status - prominent VN dialog */}
           <CurrentStatus devices={current.devices ?? []} />
+          <MusicStatus devices={current.devices ?? []} />
 
           <div className="flex flex-col lg:flex-row gap-6">
             {/* Left: device cards (narrow) */}
