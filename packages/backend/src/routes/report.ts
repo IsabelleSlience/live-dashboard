@@ -63,28 +63,33 @@ export async function handleReport(req: Request): Promise<Response> {
   const timeBucket = Math.floor(Date.now() / 10000);
   const titleHash = hmacTitle(windowTitle.toLowerCase().trim());
 
-  // Parse extra (battery, etc.) — whitelist fields first, then serialize
-  let extraJson = "{}";
+  // Parse extra (battery, music, etc.) — whitelist fields first, then serialize
+  const extra: Record<string, unknown> = {};
+  
+  // Battery from body.extra
   if (body.extra && typeof body.extra === "object" && !Array.isArray(body.extra)) {
-    const extra: Record<string, unknown> = {};
     if (typeof body.extra.battery_percent === "number" && Number.isFinite(body.extra.battery_percent)) {
       extra.battery_percent = Math.max(0, Math.min(100, Math.round(body.extra.battery_percent)));
     }
     if (typeof body.extra.battery_charging === "boolean") {
       extra.battery_charging = body.extra.battery_charging;
     }
-    const rawMusic = body.extra.music;
-    if (rawMusic != null && typeof rawMusic === "object" && !Array.isArray(rawMusic)) {
-      const music: Record<string, string> = {};
-      if (typeof rawMusic.title === "string") music.title = rawMusic.title.slice(0, 256);
-      if (typeof rawMusic.artist === "string") music.artist = rawMusic.artist.slice(0, 256);
-      if (typeof rawMusic.app === "string") music.app = rawMusic.app.slice(0, 64);
-      if (Object.keys(music).length > 0) {
-        extra.music = music;
-      }
-    }
-    extraJson = JSON.stringify(extra);
   }
+  
+  // Music from body.music (top level) — QQ 音乐特殊处理
+  if (body.music && typeof body.music === "object" && !Array.isArray(body.music)) {
+    const music: Record<string, unknown> = {};
+    if (typeof body.music.title === "string") music.title = body.music.title;
+    if (typeof body.music.artist === "string") music.artist = body.music.artist;
+    if (typeof body.music.album === "string") music.album = body.music.album;
+    if (typeof body.music.playing === "boolean") music.playing = body.music.playing;
+    if (typeof body.music.duration === "number") music.duration = body.music.duration;
+    if (typeof body.music.elapsedTime === "number") music.elapsedTime = body.music.elapsedTime;
+    if (typeof body.music.bundleIdentifier === "string") music.bundleIdentifier = body.music.bundleIdentifier;
+    extra.music = music;
+  }
+  
+  const extraJson = JSON.stringify(extra);
 
   // Insert activity — window_title is NEVER stored (privacy: empty string)
   try {

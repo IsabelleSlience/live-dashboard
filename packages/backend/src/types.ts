@@ -12,6 +12,15 @@ export interface ReportPayload {
     battery_percent?: number;
     battery_charging?: boolean;
   };
+  music?: {
+    title?: string;
+    artist?: string;
+    album?: string;
+    playing?: boolean;
+    duration?: number;
+    elapsedTime?: number;
+    bundleIdentifier?: string;
+  };
 }
 
 export interface ActivityRecord {
