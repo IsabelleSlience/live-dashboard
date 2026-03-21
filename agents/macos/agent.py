@@ -145,6 +145,7 @@ def get_music_info() -> dict | None:
                 capture_output=True, text=True, timeout=3,
             )
             if result.returncode != 0:
+                # AppleScript 出错，继续尝试下一个应用
                 continue
             output = result.stdout.strip()
             if output in ("NOT_RUNNING", "NOT_PLAYING", ""):
@@ -165,8 +166,11 @@ def get_music_info() -> dict | None:
                     info["artist"] = artist.strip()[:256]
                 else:
                     info["title"] = output[:256]
+            
+            log.debug(f"Found music from {app_name}: {info}")
             return info
-        except (subprocess.TimeoutExpired, Exception):
+        except (subprocess.TimeoutExpired, Exception) as e:
+            log.debug(f"Music detection error for {app_name}: {e}")
             continue
     return None
 
