@@ -278,7 +278,7 @@ class Reporter:
         self._consecutive_failures = 0
         self._current_backoff = 0
 
-    def send(self, app_id: str, window_title: str, extra: dict | None = None) -> bool:
+    def send(self, app_id: str, window_title: str, extra: dict | None = None, music: dict | None = None) -> bool:
         """Send a report. Returns True on success."""
         payload = {
             "app_id": app_id,
@@ -287,6 +287,8 @@ class Reporter:
         }
         if extra:
             payload["extra"] = extra
+        if music:
+            payload["music"] = music
         try:
             resp = self.session.post(self.endpoint, json=payload, timeout=10)
             if resp.status_code in (200, 201, 409):
@@ -357,9 +359,7 @@ def main() -> None:
             if changed or heartbeat_due:
                 extra = get_battery_extra()
                 music = get_music_info()
-                if music:
-                    extra["music"] = music
-                success = reporter.send(app_id, title, extra)
+                success = reporter.send(app_id, title, extra, music)
                 if success:
                     prev_app = app_id
                     prev_title = title
