@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { DeviceState, TimelineSegment } from "@/lib/api";
 import { getAppDescription } from "@/lib/app-descriptions";
 import {
+  getNormalizedDisplayTitle,
   formatClockTime,
   formatDuration,
   formatMinutesAgo,
@@ -13,8 +14,9 @@ import {
 } from "@/lib/timeline-utils";
 
 const APP_COLORS = [
-  "#E6A4B4", "#9BC7C2", "#E7C27D", "#CDA98B", "#D8B7C8",
-  "#AFC9A6", "#E2B6A3", "#A9BCCB", "#D6C48F", "#C7B6D8",
+  "#D79AA8", "#8FB7B4", "#D9B77A", "#B99D88", "#C8ABC3",
+  "#9FBC9B", "#D5A997", "#94AFC2", "#C7B57E", "#B6A4CC",
+  "#C98F95", "#8FA8A0",
 ];
 
 const SLOT_MINUTES = 10;
@@ -62,8 +64,40 @@ interface RankedItem {
   count: number;
 }
 
+interface RankedPage {
+  label: string;
+  url: string;
+  minutes: number;
+}
+
+interface MergedDetailSegment {
+  appName: string;
+  displayTitle: string;
+  pageUrl: string;
+  startTime: string;
+  endTime: string;
+  activeMinutes: number;
+  count: number;
+}
+
+function formatLinkLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+function getLatestPageUrl(segments: TimelineSegment[]): string {
+  const latestWithUrl = [...segments]
+    .filter((seg) => !!seg.page_url)
+    .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
+  return latestWithUrl?.page_url || "";
+}
+
 function getTaskKey(seg: TimelineSegment): string {
-  return `${seg.app_name}::${seg.display_title || ""}`;
+  return `${seg.app_name}::${getNormalizedDisplayTitle(seg)}`;
 }
 
 function getAppColor(appName: string, colorMap: Map<string, string>): string {
@@ -72,6 +106,45 @@ function getAppColor(appName: string, colorMap: Map<string, string>): string {
   const color = APP_COLORS[colorMap.size % APP_COLORS.length]!;
   colorMap.set(appName, color);
   return color;
+}
+
+function getSlotStyle(slot: TimelineSlot, isSelected: boolean) {
+  if (!slot.active) {
+    return {
+      backgroundColor: "rgba(255, 255, 255, 0.28)",
+      borderColor: "color-mix(in srgb, var(--color-border) 88%, white)",
+      boxShadow: isSelected ? "inset 0 0 0 1px rgba(132, 94, 111, 0.16)" : "inset 0 1px 0 rgba(255, 255, 255, 0.45)",
+      opacity: 1,
+    };
+  }
+
+  const baseColor = slot.color || "var(--color-primary)";
+  return {
+    backgroundColor: `color-mix(in srgb, ${baseColor} 78%, white)`,
+    borderColor: isSelected
+      ? `color-mix(in srgb, ${baseColor} 88%, var(--color-primary))`
+      : `color-mix(in srgb, ${baseColor} 58%, var(--color-border))`,
+    boxShadow: isSelected
+      ? `0 0 0 1px color-mix(in srgb, ${baseColor} 52%, white), inset 0 1px 0 rgba(255, 255, 255, 0.5)`
+      : `inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 1px 2px rgba(73, 55, 63, 0.08)`,
+    opacity: 1,
+  };
+}
+
+function openRangeDetails(
+  deviceName: string,
+  historySegments: TimelineSegment[],
+  startSlot: number,
+  endSlot: number,
+  setSelectedRange: (value: RangeModalState | null) => void,
+) {
+  const state = normalizeSlotRange(startSlot, endSlot);
+  setSelectedRange({
+    deviceName,
+    startSlot: state.startSlot,
+    endSlot: state.endSlot,
+    segments: getSegmentsForRange(historySegments, state.startSlot, state.endSlot),
+  });
 }
 
 function getMinutesSinceMidnight(dateStr: string): number {
@@ -124,7 +197,7 @@ function buildTaskGroups(segments: TimelineSegment[]): TaskGroup[] {
 
     groups.push({
       appName: seg.app_name,
-      displayTitle: seg.display_title || "",
+      displayTitle: getNormalizedDisplayTitle(seg),
       startTime: seg.started_at,
       endTime: segEnd,
       activeMinutes: seg.duration_minutes || 0,
@@ -156,15 +229,16 @@ function buildCurrentTaskGroups(segments: TimelineSegment[]): CurrentTaskGroup[]
           : existing.endTime;
       existing.activeMinutes += seg.duration_minutes || 0;
       existing.segments.push(seg);
-      if (seg.display_title && new Date(segEnd).getTime() >= new Date(existing.endTime).getTime()) {
-        existing.displayTitle = seg.display_title;
+      const normalizedTitle = getNormalizedDisplayTitle(seg);
+      if (normalizedTitle && new Date(segEnd).getTime() >= new Date(existing.endTime).getTime()) {
+        existing.displayTitle = normalizedTitle;
       }
       continue;
     }
 
     byApp.set(seg.app_name, {
       appName: seg.app_name,
-      displayTitle: seg.display_title || "",
+      displayTitle: getNormalizedDisplayTitle(seg),
       startTime: seg.started_at,
       endTime: segEnd,
       activeMinutes: seg.duration_minutes || 0,
@@ -230,7 +304,7 @@ function parseTimeToSlot(value: string, isEnd = false): number | null {
 function buildTopEvents(segments: TimelineSegment[]): RankedItem[] {
   const counts = new Map<string, number>();
   for (const seg of segments) {
-    const label = getAppDescription(seg.app_name, seg.display_title || undefined);
+    const label = getAppDescription(seg.app_name, getNormalizedDisplayTitle(seg) || undefined);
     counts.set(label, (counts.get(label) || 0) + 1);
   }
   return Array.from(counts.entries())
@@ -250,38 +324,130 @@ function buildTopApps(segments: TimelineSegment[]): RankedItem[] {
     .slice(0, 3);
 }
 
+function buildTopPages(segments: TimelineSegment[]): RankedPage[] {
+  const pages = new Map<string, RankedPage>();
+
+  for (const seg of segments) {
+    if (!seg.page_url) continue;
+    const existing = pages.get(seg.page_url);
+    const minutes = seg.duration_minutes || 0;
+
+    if (existing) {
+      existing.minutes += minutes;
+      continue;
+    }
+
+    pages.set(seg.page_url, {
+      label: formatLinkLabel(seg.page_url),
+      url: seg.page_url,
+      minutes,
+    });
+  }
+
+  return Array.from(pages.values())
+    .filter((item) => item.minutes >= 1)
+    .sort((a, b) => b.minutes - a.minutes);
+}
+
+function buildMergedDetailSegments(segments: TimelineSegment[]): MergedDetailSegment[] {
+  const merged: MergedDetailSegment[] = [];
+
+  for (const seg of sortSegmentsAsc(segments)) {
+    const displayTitle = getNormalizedDisplayTitle(seg);
+    const pageUrl = seg.page_url || "";
+    const prev = merged[merged.length - 1];
+    const segEnd = getSegmentEnd(seg);
+
+    const canMerge =
+      prev &&
+      prev.appName === seg.app_name &&
+      prev.displayTitle === displayTitle &&
+      prev.pageUrl === pageUrl &&
+      getGapMinutes(prev.endTime, seg.started_at) <= 1;
+
+    if (canMerge) {
+      prev.endTime = segEnd;
+      prev.activeMinutes += seg.duration_minutes || 0;
+      prev.count += 1;
+      continue;
+    }
+
+    merged.push({
+      appName: seg.app_name,
+      displayTitle,
+      pageUrl,
+      startTime: seg.started_at,
+      endTime: segEnd,
+      activeMinutes: seg.duration_minutes || 0,
+      count: 1,
+    });
+  }
+
+  return merged;
+}
+
 function TaskDetails({ group }: { group: TaskGroup }) {
+  const groupPageUrl = getLatestPageUrl(group.segments);
+  const mergedSegments = buildMergedDetailSegments(group.segments);
+
   return (
     <div className="space-y-3">
       <div className="rounded-2xl bg-[var(--color-cream-light)] px-4 py-4">
         <p className="text-sm font-semibold text-[var(--color-primary)] break-words">
           {getTaskLabel(group)}
         </p>
+        {groupPageUrl && (
+          <a
+            href={groupPageUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="meta-link mt-2"
+          >
+            <span className="meta-link-label">{formatLinkLabel(groupPageUrl)}</span>
+          </a>
+        )}
         <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-[var(--color-text-muted)]">
           <span>{formatClockTime(group.startTime, true)} - {formatClockTime(group.endTime, true)}</span>
           <span>活跃 {formatDuration(group.activeMinutes)}</span>
-          <span>{group.segments.length} 条记录</span>
+          <span>{mergedSegments.length} 条合并后记录</span>
         </div>
       </div>
 
       <div className="space-y-2">
-        {group.segments.map((seg, index) => (
+        {mergedSegments.map((seg, index) => (
           <div
-            key={`${seg.started_at}-${index}`}
+            key={`${seg.startTime}-${index}`}
             className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-3 flex items-center justify-between gap-3"
           >
             <div className="min-w-0">
               <p className="text-xs text-[var(--color-text-muted)]">
-                {formatClockTime(seg.started_at, true)}
-                {seg.ended_at ? ` - ${formatClockTime(seg.ended_at, true)}` : ""}
+                {formatClockTime(seg.startTime, true)}
+                {seg.endTime ? ` - ${formatClockTime(seg.endTime, true)}` : ""}
               </p>
               <p className="text-sm text-[var(--color-primary)] truncate">
-                {getAppDescription(seg.app_name, seg.display_title || undefined)}
+                {getAppDescription(seg.appName, seg.displayTitle || undefined)}
               </p>
+              {seg.pageUrl && (
+                <a
+                  href={seg.pageUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="meta-link mt-2"
+                >
+                  <span className="meta-link-label">{formatLinkLabel(seg.pageUrl)}</span>
+                </a>
+              )}
             </div>
-            <span className="text-xs font-mono text-[var(--color-text-muted)] flex-shrink-0">
-              {formatDuration(seg.duration_minutes || 0)}
-            </span>
+            <div className="text-right flex-shrink-0">
+              <span className="block text-xs font-mono text-[var(--color-text-muted)]">
+                {formatDuration(seg.activeMinutes)}
+              </span>
+              {seg.count > 1 && (
+                <span className="block mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  合并 {seg.count} 条
+                </span>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -292,6 +458,8 @@ function TaskDetails({ group }: { group: TaskGroup }) {
 function RangeDetails({ state }: { state: RangeModalState }) {
   const topEvents = buildTopEvents(state.segments);
   const topApps = buildTopApps(state.segments);
+  const topPages = buildTopPages(state.segments);
+  const mergedSegments = buildMergedDetailSegments(state.segments);
   const primary = topEvents[0]?.label || "这段时间比较分散";
 
   return (
@@ -301,7 +469,7 @@ function RangeDetails({ state }: { state: RangeModalState }) {
           {getSlotTimeLabel(state.startSlot)} - {getSlotTimeLabel(state.endSlot + 1)}
         </p>
         <p className="text-xs text-[var(--color-text-muted)] mt-2">
-          共 {state.segments.length} 条活动
+          共 {mergedSegments.length} 条合并后活动
         </p>
       </div>
 
@@ -338,33 +506,86 @@ function RangeDetails({ state }: { state: RangeModalState }) {
         )}
       </div>
 
+      {topPages.length > 0 && (
+        <div className="rounded-2xl bg-[var(--color-cream-light)] px-4 py-4">
+          <p className="text-sm font-semibold text-[var(--color-primary)]">
+            相关网页
+          </p>
+          <p className="text-xs text-[var(--color-text-muted)] mt-2">
+            累计使用超过 1 分钟的网页都会列在这里
+          </p>
+          <div className="mt-3 grid gap-2">
+            {topPages.map((item, index) => (
+              <div
+                key={`${item.url}-${index}`}
+                className="rounded-xl bg-[var(--color-card)] px-3 py-3 flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm text-[var(--color-primary)] break-words">
+                    {index + 1}. {item.label}
+                  </p>
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="meta-link mt-2"
+                  >
+                    <span className="meta-link-label">{item.url}</span>
+                  </a>
+                </div>
+                <span className="text-xs text-[var(--color-text-muted)] flex-shrink-0">
+                  {formatDuration(item.minutes)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-2">
-        {state.segments.length === 0 ? (
+        {mergedSegments.length === 0 ? (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-4 py-5 text-sm text-[var(--color-text-muted)]">
             这段时间没有活动记录。
           </div>
         ) : (
-          state.segments.map((seg, index) => (
+          mergedSegments.map((seg, index) => (
             <div
-              key={`${seg.started_at}-${index}`}
+              key={`${seg.startTime}-${index}`}
               className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-3 flex items-center justify-between gap-3"
             >
               <div className="min-w-0">
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  {formatClockTime(seg.started_at, true)}
-                  {seg.ended_at ? ` - ${formatClockTime(seg.ended_at, true)}` : ""}
+                  {formatClockTime(seg.startTime, true)}
+                  {seg.endTime ? ` - ${formatClockTime(seg.endTime, true)}` : ""}
                 </p>
                 <p className="text-sm text-[var(--color-primary)] break-words">
-                  {getAppDescription(seg.app_name, seg.display_title || undefined)}
+                  {getAppDescription(seg.appName, seg.displayTitle || undefined)}
                 </p>
+                {seg.pageUrl && (
+                  <a
+                    href={seg.pageUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="meta-link mt-2"
+                  >
+                    <span className="meta-link-label">{formatLinkLabel(seg.pageUrl)}</span>
+                  </a>
+                )}
                 <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                  {seg.app_name}
-                  {seg.display_title ? ` · ${seg.display_title}` : ""}
+                  {seg.appName}
+                  {seg.displayTitle ? ` · ${seg.displayTitle}` : ""}
                 </p>
               </div>
-              <span className="text-xs font-mono text-[var(--color-text-muted)] flex-shrink-0">
-                {formatDuration(seg.duration_minutes || 0)}
-              </span>
+              <div className="text-right flex-shrink-0">
+                <span className="block text-xs font-mono text-[var(--color-text-muted)]">
+                  {formatDuration(seg.activeMinutes)}
+                </span>
+                {seg.count > 1 && (
+                  <span className="block mt-1 text-[11px] text-[var(--color-text-muted)]">
+                    合并 {seg.count} 条
+                  </span>
+                )}
+              </div>
             </div>
           ))
         )}
@@ -457,45 +678,59 @@ export default function DetailedTimeline({ segments, devices }: Props) {
                     </p>
                   </div>
 
-                  {currentTasks.map((task, index) => (
-                    <div
-                      key={`${task.appName}-${task.endTime}-${index}`}
-                      className="rounded-2xl bg-[var(--color-cream-light)] px-4 py-4 flex items-start justify-between gap-4"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-base font-semibold text-[var(--color-primary)] break-words">
-                          {getAppDescription(task.appName, task.displayTitle || undefined)}
-                        </p>
-                        <p className="text-xs text-[var(--color-text-muted)] mt-2">
-                          {task.appName}
-                        </p>
-                        <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-[var(--color-text-muted)]">
-                          <span>{formatClockTime(task.startTime, true)} - {formatClockTime(task.endTime, true)}</span>
-                          <span>活跃 {formatDuration(task.activeMinutes)}</span>
-                          <span>最近 {formatMinutesAgo(task.endTime)}</span>
-                          {task.segments.length > 1 && <span>合并 {task.segments.length} 条</span>}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() =>
-                          setSelectedGroup({
-                            deviceName,
-                            group: {
-                              appName: task.appName,
-                              displayTitle: task.displayTitle || task.appName,
-                              startTime: task.startTime,
-                              endTime: task.endTime,
-                              activeMinutes: task.activeMinutes,
-                              segments: task.segments,
-                            },
-                          })
-                        }
-                        className="flex-shrink-0 rounded-full bg-[var(--color-primary)]/12 px-3 py-1.5 text-xs text-[var(--color-primary)] hover:bg-[var(--color-primary)]/20 transition"
+                  {currentTasks.map((task, index) => {
+                    const taskPageUrl = getLatestPageUrl(task.segments);
+
+                    return (
+                      <div
+                        key={`${task.appName}-${task.endTime}-${index}`}
+                        className="rounded-2xl bg-[var(--color-cream-light)] px-4 py-4 flex items-start justify-between gap-4"
                       >
-                        查看明细
-                      </button>
-                    </div>
-                  ))}
+                        <div className="min-w-0">
+                          <p className="text-base font-semibold text-[var(--color-primary)] break-words">
+                            {getAppDescription(task.appName, task.displayTitle || undefined)}
+                          </p>
+                          {taskPageUrl && (
+                            <a
+                              href={taskPageUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="meta-link mt-2"
+                            >
+                              <span className="meta-link-label">{formatLinkLabel(taskPageUrl)}</span>
+                            </a>
+                          )}
+                          <p className="text-xs text-[var(--color-text-muted)] mt-2">
+                            {task.appName}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-[var(--color-text-muted)]">
+                            <span>{formatClockTime(task.startTime, true)} - {formatClockTime(task.endTime, true)}</span>
+                            <span>活跃 {formatDuration(task.activeMinutes)}</span>
+                            <span>最近 {formatMinutesAgo(task.endTime)}</span>
+                            {task.segments.length > 1 && <span>合并 {task.segments.length} 条</span>}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() =>
+                            setSelectedGroup({
+                              deviceName,
+                              group: {
+                                appName: task.appName,
+                                displayTitle: task.displayTitle || task.appName,
+                                startTime: task.startTime,
+                                endTime: task.endTime,
+                                activeMinutes: task.activeMinutes,
+                                segments: task.segments,
+                              },
+                            })
+                          }
+                          className="flex-shrink-0 rounded-full bg-[var(--color-primary)]/12 px-3 py-1.5 text-xs text-[var(--color-primary)] hover:bg-[var(--color-primary)]/20 transition"
+                        >
+                          查看明细
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -558,17 +793,31 @@ export default function DetailedTimeline({ segments, devices }: Props) {
                     >
                       查看时间段
                     </button>
+                    <button
+                      onClick={() =>
+                        setSelectedRange({
+                          deviceName,
+                          startSlot: 0,
+                          endSlot: TOTAL_SLOTS - 1,
+                          segments: sortSegmentsAsc(historySegments),
+                        })
+                      }
+                      className="rounded-full bg-[var(--color-primary)]/12 px-4 py-2 text-xs text-[var(--color-primary)] hover:bg-[var(--color-primary)]/20 transition"
+                    >
+                      查看今天全部
+                    </button>
                   </div>
 
                   <div className="rounded-2xl bg-[var(--color-cream-light)] p-4">
                     <div
                       className="select-none"
-                      onMouseLeave={() => setDragState((prev) => (prev?.deviceId === deviceId ? prev : prev))}
+                      onPointerLeave={() => setDragState((prev) => (prev?.deviceId === deviceId ? prev : prev))}
                     >
-                      <div
-                        className="grid gap-x-1 gap-y-2 items-start"
-                        style={{ gridTemplateColumns: "repeat(24, minmax(0, 1fr))" }}
-                      >
+                      <div className="-mx-1 overflow-x-auto pb-2 md:overflow-visible">
+                        <div
+                          className="grid gap-x-1 gap-y-2 items-start min-w-[44rem] px-1 md:min-w-0"
+                          style={{ gridTemplateColumns: "repeat(24, minmax(0, 1fr))" }}
+                        >
                         {Array.from({ length: 24 }, (_, hour) => (
                           <div key={hour} className="min-w-0">
                             <div className="text-[10px] text-[var(--color-text-muted)] font-mono text-center mb-1 h-3">
@@ -588,37 +837,37 @@ export default function DetailedTimeline({ segments, devices }: Props) {
                                     key={slot.index}
                                     type="button"
                                     title={`${getSlotTimeLabel(slot.index)}${slot.appName ? ` · ${slot.appName}` : ""}`}
-                                    onMouseDown={() => setDragState({ deviceId, anchor: slot.index, current: slot.index })}
-                                    onMouseEnter={() =>
+                                    onPointerDown={(e) => {
+                                      e.preventDefault();
+                                      setDragState({ deviceId, anchor: slot.index, current: slot.index });
+                                    }}
+                                    onPointerEnter={() =>
                                       setDragState((prev) =>
                                         prev?.deviceId === deviceId ? { ...prev, current: slot.index } : prev
                                       )
                                     }
-                                    onMouseUp={() => {
+                                    onPointerUp={() => {
                                       const state = dragState?.deviceId === deviceId
                                         ? normalizeSlotRange(dragState.anchor, slot.index)
                                         : normalizeSlotRange(slot.index, slot.index);
                                       setDragState(null);
-                                      setSelectedRange({
+                                      openRangeDetails(
                                         deviceName,
-                                        startSlot: state.startSlot,
-                                        endSlot: state.endSlot,
-                                        segments: getSegmentsForRange(historySegments, state.startSlot, state.endSlot),
-                                      });
+                                        historySegments,
+                                        state.startSlot,
+                                        state.endSlot,
+                                        setSelectedRange
+                                      );
                                     }}
-                                    className="w-full aspect-square rounded-[4px] border transition"
-                                    style={{
-                                      backgroundColor: slot.active ? slot.color || "var(--color-primary)" : "transparent",
-                                      borderColor: isSelected ? "var(--color-primary)" : "var(--color-border)",
-                                      boxShadow: isSelected ? "inset 0 0 0 1.5px rgba(103, 74, 89, 0.28)" : "none",
-                                      opacity: slot.active ? 1 : 0.35,
-                                    }}
+                                    className="w-full aspect-square min-h-[1.35rem] rounded-[6px] border transition hover:scale-[1.03] touch-none"
+                                    style={getSlotStyle(slot, !!isSelected)}
                                   />
                                 );
                               })}
                             </div>
                           </div>
                         ))}
+                        </div>
                       </div>
                     </div>
 

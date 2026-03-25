@@ -37,5 +37,7 @@ export function authenticateToken(authHeader: string | null): DeviceInfo | null 
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match) return null;
 
-  return tokenMap.get(match[1]) || null;
+  const token = match[1];
+  if (!token) return null;
+  return tokenMap.get(token) || null;
 }

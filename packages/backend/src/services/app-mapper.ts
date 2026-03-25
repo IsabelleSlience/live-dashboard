@@ -36,6 +36,7 @@ export function resolveAppName(
     if (appId.includes(".")) {
       const parts = appId.split(".");
       const last = parts[parts.length - 1];
+      if (!last) return appId;
       return last.charAt(0).toUpperCase() + last.slice(1);
     }
     return appId;

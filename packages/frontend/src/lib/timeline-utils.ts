@@ -125,6 +125,17 @@ export function cleanBrowserTitle(rawTitle: string, appName?: string): string {
     title = title.replace(new RegExp(`\\s*-\\s*${escaped}(?:\\s*-\\s*[^-]+)?$`, "i"), "");
   }
 
+  const transientSuffixes = [
+    /\s*-\s*内存用量高\s*-\s*\d+(?:\.\d+)?\s*(?:MB|GB)$/i,
+    /\s*-\s*高内存用量\s*-\s*\d+(?:\.\d+)?\s*(?:MB|GB)$/i,
+    /\s*-\s*memory usage high\s*-\s*\d+(?:\.\d+)?\s*(?:MB|GB)$/i,
+    /\s*-\s*high memory usage\s*-\s*\d+(?:\.\d+)?\s*(?:MB|GB)$/i,
+  ];
+
+  for (const pattern of transientSuffixes) {
+    title = title.replace(pattern, "");
+  }
+
   title = title.replace(/\s*-\s*(?:chore-)?Isabelle$/i, "");
   title = title.replace(/\s*-\s*[^-]+$/, (match) => {
     const value = match.replace(/^\s*-\s*/, "");
@@ -132,4 +143,10 @@ export function cleanBrowserTitle(rawTitle: string, appName?: string): string {
   });
 
   return title.trim();
+}
+
+export function getNormalizedDisplayTitle(seg: Pick<TimelineSegment, "app_name" | "display_title">): string {
+  const rawTitle = (seg.display_title || "").trim();
+  if (!rawTitle) return "";
+  return isBrowserApp(seg.app_name) ? cleanBrowserTitle(rawTitle, seg.app_name) : rawTitle;
 }

@@ -19,6 +19,7 @@ db.run(`
     app_id TEXT NOT NULL,
     app_name TEXT NOT NULL,
     window_title TEXT DEFAULT '',
+    page_url TEXT DEFAULT '',
     title_hash TEXT NOT NULL DEFAULT '',
     time_bucket INTEGER NOT NULL DEFAULT 0,
     started_at TEXT NOT NULL,
@@ -55,6 +56,7 @@ db.run(`
     app_id TEXT NOT NULL,
     app_name TEXT NOT NULL,
     window_title TEXT DEFAULT '',
+    page_url TEXT DEFAULT '',
     last_seen_at TEXT NOT NULL,
     is_online INTEGER DEFAULT 1
   )
@@ -89,9 +91,18 @@ db.run(`
   ON music_history(started_at DESC)
 `);
 
+// Mood note table (single-row document)
+db.run(`
+  CREATE TABLE IF NOT EXISTS mood_notes (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    content TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
 // ── Schema migration: add display_title + extra columns ──
 
-const KNOWN_TABLES = new Set(["activities", "device_states"]);
+const KNOWN_TABLES = new Set(["activities", "device_states", "mood_notes"]);
 
 function columnExists(table: string, column: string): boolean {
   if (!KNOWN_TABLES.has(table)) {
@@ -106,14 +117,26 @@ if (!columnExists("activities", "display_title")) {
   db.run("ALTER TABLE activities ADD COLUMN display_title TEXT DEFAULT ''");
 }
 
+if (!columnExists("activities", "page_url")) {
+  db.run("ALTER TABLE activities ADD COLUMN page_url TEXT DEFAULT ''");
+}
+
 // device_states.display_title
 if (!columnExists("device_states", "display_title")) {
   db.run("ALTER TABLE device_states ADD COLUMN display_title TEXT DEFAULT ''");
 }
 
+if (!columnExists("device_states", "page_url")) {
+  db.run("ALTER TABLE device_states ADD COLUMN page_url TEXT DEFAULT ''");
+}
+
 // device_states.extra (JSON string for battery, etc.)
 if (!columnExists("device_states", "extra")) {
   db.run("ALTER TABLE device_states ADD COLUMN extra TEXT DEFAULT '{}'");
+}
+
+if (!columnExists("mood_notes", "updated_at")) {
+  db.run("ALTER TABLE mood_notes ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))");
 }
 
 // ── HMAC hash secret validation ──
@@ -133,14 +156,14 @@ export function hmacTitle(title: string): string {
 
 // Prepared statements
 export const insertActivity = db.prepare(`
-  INSERT INTO activities (device_id, device_name, platform, app_id, app_name, window_title, display_title, title_hash, time_bucket, started_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO activities (device_id, device_name, platform, app_id, app_name, window_title, display_title, page_url, title_hash, time_bucket, started_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(device_id, app_id, title_hash, time_bucket) DO NOTHING
 `);
 
 export const upsertDeviceState = db.prepare(`
-  INSERT INTO device_states (device_id, device_name, platform, app_id, app_name, window_title, display_title, last_seen_at, extra, is_online)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+  INSERT INTO device_states (device_id, device_name, platform, app_id, app_name, window_title, display_title, page_url, last_seen_at, extra, is_online)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
   ON CONFLICT(device_id) DO UPDATE SET
     device_name = excluded.device_name,
     platform = excluded.platform,
@@ -148,9 +171,26 @@ export const upsertDeviceState = db.prepare(`
     app_name = excluded.app_name,
     window_title = excluded.window_title,
     display_title = excluded.display_title,
+    page_url = excluded.page_url,
     last_seen_at = excluded.last_seen_at,
     extra = excluded.extra,
     is_online = 1
+`);
+
+export const upsertIdleDeviceState = db.prepare(`
+  INSERT INTO device_states (device_id, device_name, platform, app_id, app_name, window_title, display_title, page_url, last_seen_at, extra, is_online)
+  VALUES (?, ?, ?, ?, ?, '', '', '', ?, ?, 0)
+  ON CONFLICT(device_id) DO UPDATE SET
+    device_name = excluded.device_name,
+    platform = excluded.platform,
+    app_id = excluded.app_id,
+    app_name = excluded.app_name,
+    window_title = '',
+    display_title = '',
+    page_url = '',
+    last_seen_at = excluded.last_seen_at,
+    extra = excluded.extra,
+    is_online = 0
 `);
 
 export const insertMusicHistory = db.prepare(`
@@ -207,6 +247,18 @@ export const cleanupOldActivities = db.prepare(`
 
 export const cleanupOldMusicHistory = db.prepare(`
   DELETE FROM music_history WHERE created_at < datetime('now', '-7 days')
+`);
+
+export const getMoodNote = db.prepare(`
+  SELECT content, updated_at FROM mood_notes WHERE id = 1
+`);
+
+export const upsertMoodNote = db.prepare(`
+  INSERT INTO mood_notes (id, content, updated_at)
+  VALUES (1, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
+    content = excluded.content,
+    updated_at = excluded.updated_at
 `);
 
 export default db;

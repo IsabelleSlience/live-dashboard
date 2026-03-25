@@ -47,10 +47,6 @@ export default function MusicPlaylist({ records }: Props) {
   const playlist = useMemo(() => buildPlaylist(records), [records]);
   const preview = playlist.slice(0, 4);
 
-  if (playlist.length === 0) {
-    return null;
-  }
-
   return (
     <>
       <div className="card-decorated rounded-xl p-4">
@@ -63,35 +59,46 @@ export default function MusicPlaylist({ records }: Props) {
               今日听过 {playlist.length} 首
             </h3>
           </div>
-          <button
-            onClick={() => setIsExpanded(true)}
-            className="text-xs px-3 py-1.5 rounded-full bg-[var(--color-primary)]/12 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/20 transition"
-          >
-            查看全部
-          </button>
+          {playlist.length > 0 && (
+            <button
+              onClick={() => setIsExpanded(true)}
+              className="text-xs px-3 py-1.5 rounded-full bg-[var(--color-primary)]/12 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/20 transition"
+            >
+              查看全部
+            </button>
+          )}
         </div>
 
-        <div className="space-y-2">
-          {preview.map((record) => (
-            <div
-              key={`${record.title}-${record.artist || ""}`}
-              className="rounded-xl bg-[var(--color-cream-light)] px-3 py-3"
-            >
-              <p className="text-sm font-semibold text-[var(--color-primary)] truncate">
-                {record.title}
-              </p>
-              <div className="flex items-center justify-between gap-3 mt-1 text-[11px] text-[var(--color-text-muted)]">
-                <span className="truncate">
-                  {record.artist || record.app}
-                </span>
-                <span className="flex-shrink-0">{formatClockTime(record.startedAt)}</span>
+        {playlist.length === 0 ? (
+          <div className="rounded-xl bg-[var(--color-cream-light)] px-3 py-5 text-center">
+            <p className="text-lg mb-1">(-.-) zzZ</p>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              今天还没有听歌喵~
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {preview.map((record) => (
+              <div
+                key={`${record.title}-${record.artist || ""}`}
+                className="rounded-xl bg-[var(--color-cream-light)] px-3 py-3"
+              >
+                <p className="text-sm font-semibold text-[var(--color-primary)] truncate">
+                  {record.title}
+                </p>
+                <div className="flex items-center justify-between gap-3 mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  <span className="truncate">
+                    {record.artist || record.app}
+                  </span>
+                  <span className="flex-shrink-0">{formatClockTime(record.startedAt)}</span>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {isExpanded && (
+      {playlist.length > 0 && isExpanded && (
         <div
           className="fixed inset-0 bg-black/45 z-40 flex items-center justify-center p-4"
           onClick={() => setIsExpanded(false)}

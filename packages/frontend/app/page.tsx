@@ -7,6 +7,7 @@ import CurrentStatus from "@/components/CurrentStatus";
 import MusicStatus from "@/components/MusicStatus";
 import BrowserHistory from "@/components/BrowserHistory";
 import MusicPlaylist from "@/components/MusicPlaylist";
+import MoodNote from "@/components/MoodNote";
 import DetailedTimeline from "@/components/DetailedTimeline";
 import DeviceCard from "@/components/DeviceCard";
 import DatePicker from "@/components/DatePicker";
@@ -80,6 +81,7 @@ export default function Home() {
               )}
 
               {timeline && <MusicPlaylist records={timeline.music_history ?? []} />}
+              <MoodNote />
             </div>
 
             {/* Right: timeline (wide) */}

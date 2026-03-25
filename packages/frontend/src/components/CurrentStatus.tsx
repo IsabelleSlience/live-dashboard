@@ -1,5 +1,6 @@
 import type { DeviceState } from "@/lib/api";
 import { getAppDescription } from "@/lib/app-descriptions";
+import { getNormalizedDisplayTitle } from "@/lib/timeline-utils";
 
 interface Props {
   devices: DeviceState[];
@@ -16,7 +17,7 @@ export default function CurrentStatus({ devices }: Props) {
 
   const isOnline = !!active;
   const description = active
-    ? getAppDescription(active.app_name, active.display_title, active.extra?.music)
+    ? getAppDescription(active.app_name, getNormalizedDisplayTitle(active), active.extra?.music)
     : null;
 
   // Battery info from the active device

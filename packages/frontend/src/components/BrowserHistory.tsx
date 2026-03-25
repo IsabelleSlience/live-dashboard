@@ -3,9 +3,9 @@
 import { useMemo, useState } from "react";
 import type { TimelineSegment } from "@/lib/api";
 import {
-  cleanBrowserTitle,
   formatClockTime,
   formatDuration,
+  getNormalizedDisplayTitle,
   isBrowserApp,
   sortSegmentsAsc,
 } from "@/lib/timeline-utils";
@@ -16,6 +16,7 @@ interface Props {
 
 interface BrowserVisitGroup {
   title: string;
+  pageUrl: string;
   appName: string;
   startTime: string;
   endTime: string;
@@ -26,8 +27,18 @@ interface BrowserVisitGroup {
 
 interface BrowserOverviewItem {
   title: string;
+  pageUrl: string;
   count: number;
   totalMinutes: number;
+}
+
+function formatLinkLabel(urlStr: string): string {
+  try {
+    const url = new URL(urlStr);
+    return `${url.hostname}${url.pathname === "/" ? "" : url.pathname}`;
+  } catch {
+    return urlStr;
+  }
 }
 
 function groupBrowserVisits(segments: TimelineSegment[]): BrowserVisitGroup[] {
@@ -35,18 +46,20 @@ function groupBrowserVisits(segments: TimelineSegment[]): BrowserVisitGroup[] {
     .filter((seg) => isBrowserApp(seg.app_name) && (seg.display_title || "").trim())
     .map((seg) => ({
       ...seg,
-      display_title: cleanBrowserTitle(seg.display_title || "", seg.app_name),
+      display_title: getNormalizedDisplayTitle(seg),
     }))
     .filter((seg) => (seg.display_title || "").trim());
   const groups: BrowserVisitGroup[] = [];
 
   for (const seg of browserSegments) {
     const title = (seg.display_title || "").trim();
+    const pageUrl = (seg.page_url || "").trim();
     const duration = seg.duration_minutes || 0;
     const prev = groups[groups.length - 1];
     const canMerge =
       prev &&
-      prev.title === title;
+      prev.title === title &&
+      prev.pageUrl === pageUrl;
 
     if (canMerge) {
       prev.endTime = seg.ended_at || seg.started_at;
@@ -58,6 +71,7 @@ function groupBrowserVisits(segments: TimelineSegment[]): BrowserVisitGroup[] {
 
     groups.push({
       title,
+      pageUrl,
       appName: seg.app_name,
       startTime: seg.started_at,
       endTime: seg.ended_at || seg.started_at,
@@ -73,14 +87,16 @@ function groupBrowserVisits(segments: TimelineSegment[]): BrowserVisitGroup[] {
 function buildBrowserOverview(groups: BrowserVisitGroup[]): BrowserOverviewItem[] {
   const stats = new Map<string, BrowserOverviewItem>();
   for (const group of groups) {
-    const current = stats.get(group.title);
+    const key = `${group.title}::${group.pageUrl}`;
+    const current = stats.get(key);
     if (current) {
       current.count += group.count;
       current.totalMinutes += group.totalMinutes;
       continue;
     }
-    stats.set(group.title, {
+    stats.set(key, {
       title: group.title,
+      pageUrl: group.pageUrl,
       count: group.count,
       totalMinutes: group.totalMinutes,
     });
@@ -182,21 +198,43 @@ export default function BrowserHistory({ segments }: Props) {
               {groups.map((group, index) => {
                 const key = `${group.title}-${group.startTime}-${index}`;
                 const isOpen = openKey === key;
+                const isExpandable = group.items.length > 1;
 
                 return (
                   <div key={key} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] overflow-hidden">
-                    <button
-                      onClick={() => setOpenKey(isOpen ? null : key)}
-                      className="w-full text-left px-4 py-4 hover:bg-[var(--color-cream-light)] transition"
+                    <div
+                      className={`w-full text-left px-4 py-4 ${isExpandable ? "hover:bg-[var(--color-cream-light)] transition cursor-pointer" : ""}`}
+                      onClick={isExpandable ? () => setOpenKey(isOpen ? null : key) : undefined}
+                      role={isExpandable ? "button" : undefined}
+                      tabIndex={isExpandable ? 0 : undefined}
+                      onKeyDown={isExpandable ? (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setOpenKey(isOpen ? null : key);
+                        }
+                      } : undefined}
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-[var(--color-primary)] break-words">
                             {group.title}
                           </p>
-                          <p className="text-xs text-[var(--color-text-muted)] mt-2">
+                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--color-text-muted)]">
+                            <span>
                             {formatClockTime(group.startTime, true)} - {formatClockTime(group.endTime, true)}
-                          </p>
+                            </span>
+                            {group.pageUrl && (
+                              <a
+                                href={group.pageUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="meta-link"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <span className="meta-link-label">{formatLinkLabel(group.pageUrl)}</span>
+                              </a>
+                            )}
+                          </div>
                         </div>
                         <div className="text-right flex-shrink-0">
                           <p className="text-xs text-[var(--color-text-muted)]">
@@ -205,24 +243,31 @@ export default function BrowserHistory({ segments }: Props) {
                           <p className="text-xs font-mono text-[var(--color-primary)] mt-1">
                             {formatDuration(group.totalMinutes)}
                           </p>
+                          {isExpandable && (
+                            <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                              {isOpen ? "收起明细 ↑" : "展开明细 ↓"}
+                            </p>
+                          )}
                         </div>
                       </div>
-                    </button>
+                    </div>
 
-                    {isOpen && (
+                    {isExpandable && isOpen && (
                       <div className="px-4 pb-4 space-y-2">
                         {group.items.map((item, itemIndex) => (
                           <div
                             key={`${item.started_at}-${itemIndex}`}
-                            className="rounded-xl bg-[var(--color-cream-light)] px-3 py-2 flex items-center justify-between gap-3 text-xs"
+                            className="rounded-xl bg-[var(--color-cream-light)] px-3 py-2 text-xs"
                           >
-                            <span className="text-[var(--color-text-muted)]">
-                              {formatClockTime(item.started_at, true)}
-                              {item.ended_at ? ` - ${formatClockTime(item.ended_at, true)}` : ""}
-                            </span>
-                            <span className="text-[var(--color-primary)] font-mono">
-                              {formatDuration(item.duration_minutes || 0)}
-                            </span>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-[var(--color-text-muted)]">
+                                {formatClockTime(item.started_at, true)}
+                                {item.ended_at ? ` - ${formatClockTime(item.ended_at, true)}` : ""}
+                              </span>
+                              <span className="text-[var(--color-primary)] font-mono">
+                                {formatDuration(item.duration_minutes || 0)}
+                              </span>
+                            </div>
                           </div>
                         ))}
                       </div>

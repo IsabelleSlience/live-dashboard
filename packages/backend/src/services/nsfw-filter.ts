@@ -21,7 +21,8 @@ function extractDomains(text: string): string[] {
         .replace(/^https?:\/\//i, "")
         .replace(/^(?:www\.|m\.)/i, "")
         .toLowerCase()
-        .split("/")[0];
+        .split("/")[0] || "";
+      if (!cleaned) continue;
       domains.push(cleaned);
     }
   }

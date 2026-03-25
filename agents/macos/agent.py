@@ -12,6 +12,7 @@ Permissions:
 import ipaddress
 import json
 import logging
+import re
 import socket
 import subprocess
 import sys
@@ -27,7 +28,7 @@ import requests
 # ---------------------------------------------------------------------------
 LOG_FILE = Path(__file__).with_name("agent.log")
 logging.basicConfig(
-    level=logging.DEBUG,  # Changed from INFO to DEBUG for music detection troubleshooting
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.FileHandler(LOG_FILE, encoding="utf-8"),
@@ -50,6 +51,99 @@ tell application "System Events"
     return appName & "|SEP|" & windowTitle
 end tell
 """
+
+_BROWSER_SCRIPT_MAP = {
+    "Safari": """\
+tell application "Safari"
+    if (count of documents) = 0 then return ""
+    try
+        return URL of front document
+    on error
+        return ""
+    end try
+end tell""",
+    "Google Chrome": """\
+tell application "Google Chrome"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+    "Chrome": """\
+tell application "Google Chrome"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+    "Chromium": """\
+tell application "Chromium"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+    "Microsoft Edge": """\
+tell application "Microsoft Edge"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+    "Arc": """\
+tell application "Arc"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+    "Brave Browser": """\
+tell application "Brave Browser"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+    "Brave": """\
+tell application "Brave Browser"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+    "Opera": """\
+tell application "Opera"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+    "Vivaldi": """\
+tell application "Vivaldi"
+    if (count of windows) = 0 then return ""
+    try
+        return URL of active tab of front window
+    on error
+        return ""
+    end try
+end tell""",
+}
 
 
 def get_foreground_info() -> tuple[str, str] | None:
@@ -74,6 +168,53 @@ def get_foreground_info() -> tuple[str, str] | None:
     except (subprocess.TimeoutExpired, Exception) as e:
         log.debug("get_foreground_info error: %s", e)
         return None
+
+
+def get_browser_url(app_name: str) -> str:
+    """Return the current tab URL for supported browsers, or empty string."""
+    script = _BROWSER_SCRIPT_MAP.get(app_name)
+    if not script:
+        return ""
+
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode != 0:
+            return ""
+        url = result.stdout.strip()[:2048]
+        if url:
+            log.debug("Captured browser URL for %s: %s", app_name, url)
+        return url
+    except (subprocess.TimeoutExpired, Exception) as e:
+        log.debug("get_browser_url error for %s: %s", app_name, e)
+        return ""
+
+
+def get_idle_seconds() -> float:
+    """Return seconds since last keyboard/mouse input on macOS."""
+    try:
+        result = subprocess.run(
+            ["ioreg", "-c", "IOHIDSystem"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode != 0:
+            return 0.0
+
+        match = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', result.stdout)
+        if not match:
+            return 0.0
+
+        idle_ns = int(match.group(1))
+        return idle_ns / 1_000_000_000
+    except (subprocess.TimeoutExpired, ValueError, Exception) as e:
+        log.debug("get_idle_seconds error: %s", e)
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +276,32 @@ tell application "System Events"
 end tell""",
 }
 
+_MUSIC_PROCESS_NAMES = {
+    "Spotify": ("Spotify",),
+    "Music": ("Music",),
+    "QQ音乐": ("QQMusic",),
+    "网易云音乐": ("NeteaseMusic",),
+}
+
+
+def is_any_process_running(names: tuple[str, ...]) -> bool:
+    """Return True if any process name matches one of the provided names."""
+    wanted = {name.lower() for name in names}
+    try:
+        for proc in psutil.process_iter(["name"]):
+            proc_name = (proc.info.get("name") or "").strip().lower()
+            if proc_name in wanted:
+                return True
+    except (psutil.Error, OSError, ValueError) as e:
+        log.debug("Process scan error: %s", e)
+    return False
+
 
 def get_qqmusic_info() -> dict | None:
     """Read QQ Music metadata from the system media session via media-control."""
+    if not is_any_process_running(_MUSIC_PROCESS_NAMES["QQ音乐"]):
+        return None
+
     try:
         result = subprocess.run(
             ["media-control", "get"],
@@ -161,6 +325,9 @@ def get_qqmusic_info() -> dict | None:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
         log.debug("QQ Music detection error via media-control: invalid JSON: %s", e)
+        return None
+
+    if not isinstance(data, dict):
         return None
 
     if data.get("bundleIdentifier") != "com.tencent.QQMusicMac":
@@ -197,6 +364,15 @@ def get_music_info() -> dict | None:
         return qqmusic
 
     for app_name, script in _MUSIC_APPS.items():
+        process_names = _MUSIC_PROCESS_NAMES.get(app_name)
+        if process_names and not is_any_process_running(process_names):
+            continue
+
+        # QQ Music should only use media-control metadata. When the app is open
+        # but idle, falling back to window-title parsing is noisy and unreliable.
+        if app_name == "QQ音乐":
+            continue
+
         try:
             result = subprocess.run(
                 ["osascript", "-e", script],
@@ -310,6 +486,7 @@ def load_config() -> dict:
     for key, default, lo, hi in [
         ("interval_seconds", 5, 1, 300),
         ("heartbeat_seconds", 60, 10, 600),
+        ("idle_threshold_seconds", 300, 30, 3600),
     ]:
         val = cfg.get(key, default)
         if not isinstance(val, (int, float)) or val < lo or val > hi:
@@ -340,13 +517,22 @@ class Reporter:
         self._consecutive_failures = 0
         self._current_backoff = 0
 
-    def send(self, app_id: str, window_title: str, extra: dict | None = None, music: dict | None = None) -> bool:
+    def send(
+        self,
+        app_id: str,
+        window_title: str,
+        extra: dict | None = None,
+        music: dict | None = None,
+        page_url: str = "",
+    ) -> bool:
         """Send a report. Returns True on success."""
         payload = {
             "app_id": app_id,
             "window_title": window_title[:256],
             "timestamp": int(time.time() * 1000),
         }
+        if page_url:
+            payload["page_url"] = page_url
         if extra or music:
             payload["extra"] = extra or {}
             if music:
@@ -393,22 +579,47 @@ def main() -> None:
 
     interval = cfg["interval_seconds"]
     heartbeat_interval = cfg["heartbeat_seconds"]
+    idle_threshold = cfg["idle_threshold_seconds"]
 
     prev_app: str | None = None
     prev_title: str | None = None
     last_report_time: float = 0
+    was_idle = False
 
     log.info(
-        "Monitoring started — interval=%ds, heartbeat=%ds, server=%s",
+        "Monitoring started — interval=%ds, heartbeat=%ds, idle=%ds, server=%s",
         interval,
         heartbeat_interval,
+        idle_threshold,
         cfg["server_url"],
     )
 
     while True:
         try:
-            info = get_foreground_info()
             now = time.time()
+            idle_secs = get_idle_seconds()
+            is_idle = idle_secs >= idle_threshold
+
+            if is_idle and not was_idle:
+                log.info("User idle (%.0fs), switching to heartbeat-only", idle_secs)
+                was_idle = True
+            elif not is_idle and was_idle:
+                log.info("User returned after idle")
+                was_idle = False
+
+            if is_idle:
+                heartbeat_due = (now - last_report_time) >= heartbeat_interval
+                if heartbeat_due:
+                    extra = get_battery_extra()
+                    music = get_music_info()
+                    if reporter.send("idle", "User is away", extra, music):
+                        prev_app = "idle"
+                        prev_title = "User is away"
+                        last_report_time = now
+                time.sleep(interval)
+                continue
+
+            info = get_foreground_info()
 
             if info is None:
                 time.sleep(interval)
@@ -421,7 +632,10 @@ def main() -> None:
             if changed or heartbeat_due:
                 extra = get_battery_extra()
                 music = get_music_info()
-                success = reporter.send(app_id, title, extra, music)
+                page_url = get_browser_url(app_id)
+                if page_url:
+                    log.debug("Sending page_url for %s: %s", app_id, page_url)
+                success = reporter.send(app_id, title, extra, music, page_url)
                 if success:
                     prev_app = app_id
                     prev_title = title

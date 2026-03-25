@@ -1,8 +1,8 @@
 import { authenticateToken } from "../middleware/auth";
 import { resolveAppName } from "../services/app-mapper";
 import { isNSFW } from "../services/nsfw-filter";
-import { processDisplayTitle } from "../services/privacy-tiers";
-import { insertActivity, insertMusicHistory, upsertDeviceState, hmacTitle } from "../db";
+import { processDisplayTitle, sanitizeBrowserUrl } from "../services/privacy-tiers";
+import { insertActivity, insertMusicHistory, upsertDeviceState, upsertIdleDeviceState, hmacTitle } from "../db";
 
 const MAX_TITLE_LENGTH = 256;
 
@@ -25,6 +25,7 @@ export async function handleReport(req: Request): Promise<Response> {
   if (!appId) {
     return Response.json({ error: "app_id required" }, { status: 400 });
   }
+  const isIdleReport = appId.toLowerCase() === "idle";
 
   // Truncate window_title
   let windowTitle =
@@ -57,7 +58,9 @@ export async function handleReport(req: Request): Promise<Response> {
   const appName = resolveAppName(appId, device.platform);
 
   // Privacy: generate display_title (safe for public), then discard raw window_title
-  const displayTitle = processDisplayTitle(appName, windowTitle);
+  const displayTitle = isIdleReport ? "" : processDisplayTitle(appName, windowTitle);
+  const rawPageUrl = typeof body.page_url === "string" ? body.page_url : "";
+  const pageUrl = isIdleReport ? "" : sanitizeBrowserUrl(appName, windowTitle, rawPageUrl);
 
   // Dedup: HMAC hash of the original title (keyed, not reversible)
   const timeBucket = Math.floor(Date.now() / 10000);
@@ -96,39 +99,55 @@ export async function handleReport(req: Request): Promise<Response> {
   }
 
   // Insert activity — window_title is NEVER stored (privacy: empty string)
-  try {
-    insertActivity.run(
-      device.device_id,
-      device.device_name,
-      device.platform,
-      appId,
-      appName,
-      "",           // window_title: always empty for privacy
-      displayTitle,
-      titleHash,
-      timeBucket,
-      startedAt
-    );
-  } catch (e: any) {
-    // Log but don't expose internals
-    if (!e.message?.includes("UNIQUE constraint")) {
-      console.error("[report] DB insert error:", e.message);
+  if (!isIdleReport) {
+    try {
+      insertActivity.run(
+        device.device_id,
+        device.device_name,
+        device.platform,
+        appId,
+        appName,
+        "",           // window_title: always empty for privacy
+        displayTitle,
+        pageUrl,
+        titleHash,
+        timeBucket,
+        startedAt
+      );
+    } catch (e: any) {
+      // Log but don't expose internals
+      if (!e.message?.includes("UNIQUE constraint")) {
+        console.error("[report] DB insert error:", e.message);
+      }
     }
   }
 
   // Always update device state (even if activity was deduped)
   try {
-    upsertDeviceState.run(
-      device.device_id,
-      device.device_name,
-      device.platform,
-      appId,
-      appName,
-      "",           // window_title: always empty for privacy
-      displayTitle,
-      new Date().toISOString(),
-      extraJson
-    );
+    if (isIdleReport) {
+      upsertIdleDeviceState.run(
+        device.device_id,
+        device.device_name,
+        device.platform,
+        appId,
+        appName,
+        new Date().toISOString(),
+        extraJson
+      );
+    } else {
+      upsertDeviceState.run(
+        device.device_id,
+        device.device_name,
+        device.platform,
+        appId,
+        appName,
+        "",           // window_title: always empty for privacy
+        displayTitle,
+        pageUrl,
+        new Date().toISOString(),
+        extraJson
+      );
+    }
   } catch (e: any) {
     console.error("[report] Device state update error:", e.message);
     return Response.json({ error: "Internal error" }, { status: 500 });

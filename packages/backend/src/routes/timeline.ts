@@ -66,11 +66,13 @@ export function handleTimeline(url: URL): Response {
   const segments: TimelineSegment[] = [];
   for (let i = 0; i < activities.length; i++) {
     const a = activities[i];
+    if (!a) continue;
     // Find next activity on same device to compute end time
     let endedAt: string | null = null;
     for (let j = i + 1; j < activities.length; j++) {
-      if (activities[j].device_id === a.device_id) {
-        endedAt = activities[j].started_at;
+      const next = activities[j];
+      if (next && next.device_id === a.device_id) {
+        endedAt = next.started_at;
         break;
       }
     }
@@ -95,6 +97,7 @@ export function handleTimeline(url: URL): Response {
       app_name: a.app_name,
       app_id: a.app_id,
       display_title: a.display_title || "",
+      page_url: a.page_url || "",
       started_at: a.started_at,
       ended_at: endedAt,
       duration_minutes: durationMinutes,

@@ -261,23 +261,38 @@ function stripZeroWidth(s: string): string {
 /** Strip browser name suffix from a tab title (case-insensitive). */
 function stripBrowserSuffix(title: string): string {
   const cleaned = stripZeroWidth(title);
+  let current = cleaned;
   const lower = cleaned.toLowerCase();
 
   // Try Edge profile pattern first (more specific): "title - ProfileName - Microsoft Edge"
   const edgeProfileRe = /\s-\s[^-]+\s-\sMicrosoft\s*Edge$/i;
-  const m = edgeProfileRe.exec(cleaned);
+  const m = edgeProfileRe.exec(current);
   if (m && m.index !== undefined) {
-    return cleaned.slice(0, m.index).trim();
+    current = current.slice(0, m.index).trim();
   }
 
   // Then try simple suffix matching
   for (const suffix of browserSuffixes) {
-    if (lower.endsWith(suffix.toLowerCase())) {
-      return cleaned.slice(0, -suffix.length).trim();
+    if (current.toLowerCase().endsWith(suffix.toLowerCase())) {
+      current = current.slice(0, -suffix.length).trim();
+      break;
     }
   }
 
-  return cleaned;
+  current = current.replace(/\s*-\s*(?:chore-)?Isabelle$/i, "");
+
+  const transientSuffixes = [
+    /\s*-\s*内存用量高\s*-\s*\d+(?:\.\d+)?\s*(?:MB|GB)$/i,
+    /\s*-\s*高内存用量\s*-\s*\d+(?:\.\d+)?\s*(?:MB|GB)$/i,
+    /\s*-\s*memory usage high\s*-\s*\d+(?:\.\d+)?\s*(?:MB|GB)$/i,
+    /\s*-\s*high memory usage\s*-\s*\d+(?:\.\d+)?\s*(?:MB|GB)$/i,
+  ];
+
+  for (const pattern of transientSuffixes) {
+    current = current.replace(pattern, "");
+  }
+
+  return current.trim();
 }
 
 /** Check if a browser title contains sensitive keywords. */
@@ -285,6 +300,48 @@ function isSensitiveBrowserTitle(title: string): boolean {
   const lower = title.toLowerCase();
   return sensitiveKeywords.some((kw) => lower.includes(kw));
 }
+
+const sensitiveBrowserHosts = [
+  "mail.google.com",
+  "outlook.live.com",
+  "outlook.office.com",
+  "mail.qq.com",
+  "mail.163.com",
+  "mail.126.com",
+  "mail.aliyun.com",
+  "web.telegram.org",
+  "discord.com",
+  "web.whatsapp.com",
+  "slack.com",
+  "teams.microsoft.com",
+  "chat.openai.com",
+  "claude.ai",
+  "gemini.google.com",
+  "www.paypal.com",
+  "paypal.com",
+];
+
+const sensitivePathKeywords = [
+  "/login",
+  "/signin",
+  "/signup",
+  "/register",
+  "/auth",
+  "/oauth",
+  "/password",
+  "/reset",
+  "/verify",
+  "/checkout",
+  "/billing",
+  "/wallet",
+  "/pay",
+  "/payment",
+  "/messages",
+  "/dm",
+  "/settings",
+  "/account",
+  "/admin",
+];
 
 /** Check if a browser title is from a video site. */
 function isVideoSiteTitle(title: string): boolean {
@@ -369,14 +426,14 @@ function extractIDETitle(title: string): string {
   if (title.includes(" – ")) {
     const parts = title.split(" – ");
     // First part is typically the project name
-    return parts[0].trim();
+    return parts[0]?.trim() || "";
   }
 
   // Sublime Text: split by " - " (hyphen), last is app name
   if (title.includes(" - ")) {
     const parts = title.split(" - ");
     if (parts.length >= 2) {
-      const last = parts[parts.length - 1].trim().toLowerCase();
+      const last = parts[parts.length - 1]?.trim().toLowerCase() || "";
       if (last === "sublime text") {
         return parts.slice(0, -1).join(" - ").trim();
       }
@@ -515,4 +572,53 @@ export function processDisplayTitle(appName: string, windowTitle: string): strin
 
   // Games, galgame, etc. — use title directly
   return windowTitle.trim();
+}
+
+function looksSensitiveHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return sensitiveBrowserHosts.some((host) => lower === host || lower.endsWith(`.${host}`));
+}
+
+function looksSensitivePath(pathname: string): boolean {
+  const lower = pathname.toLowerCase();
+  return sensitivePathKeywords.some((part) => lower.includes(part));
+}
+
+function sanitizePathSegments(pathname: string): string {
+  const segments = pathname.split("/").map((segment) => {
+    if (!segment) return segment;
+    if (/^\d{6,}$/.test(segment)) return ":id";
+    if (/^[0-9a-f]{24,}$/i.test(segment)) return ":id";
+    if (/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(segment)) return ":id";
+    if (/^[A-Za-z0-9_-]{32,}$/.test(segment)) return ":id";
+    return segment;
+  });
+  return segments.join("/");
+}
+
+export function sanitizeBrowserUrl(appName: string, windowTitle: string, rawUrl: string): string {
+  if (!rawUrl || getPrivacyTier(appName) !== "browser") return "";
+
+  const pageTitle = stripBrowserSuffix(windowTitle);
+  if (!pageTitle || isSensitiveBrowserTitle(pageTitle)) return "";
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "";
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) return "";
+  if (!parsed.hostname || looksSensitiveHost(parsed.hostname)) return "";
+
+  parsed.username = "";
+  parsed.password = "";
+  parsed.hash = "";
+  parsed.search = "";
+  parsed.pathname = sanitizePathSegments(parsed.pathname);
+
+  if (looksSensitivePath(parsed.pathname)) return "";
+
+  return parsed.toString();
 }
